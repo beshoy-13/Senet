@@ -21,14 +21,21 @@ const App: React.FC = () => {
     setTheme,
     setDifficulty,
   } = useGame();
-  const { user, token, loading, logout, matchHistory } = useAuth();
+  const { user, token, loading, logout, matchHistory, refreshProfile, updateProfile } = useAuth();
   const { activeRoom, joinRoom, onlineUsers } = useSocket();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [isMuted, setIsMuted] = useState(AudioManager.isMuted);
   const [activeView, setActiveView] = useState<
-    "dashboard" | "arena" | "history" | "stats" | "friends" | "inventory"
+    "dashboard" | "arena" | "history" | "stats" | "friends" | "inventory" | "profile"
   >("arena");
+  const [isMuted, setIsMuted] = useState(AudioManager.isMuted);
+
+  // Profile editing state
+  const [profileEditUsername, setProfileEditUsername] = useState("");
+  const [profileEditSeed, setProfileEditSeed] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileMsg, setProfileMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [globalLeaderboard, setGlobalLeaderboard] = useState<any[]>([]);
   const [autoJoinAttempted, setAutoJoinAttempted] = useState(false);
 
@@ -313,39 +320,58 @@ const App: React.FC = () => {
     return "CYBER GRANDMASTER";
   };
 
-  // Mock data for Dashboard
+  // Static daily missions — progress derived from real matchHistory (today's sessions)
+  const todayStr = new Date().toDateString();
+  const todayMatches = matchHistory.filter(
+    (m) => new Date(m.startedAt).toDateString() === todayStr
+  );
+  const todayWins = todayMatches.filter((m) => m.winner === currentUsername).length;
+  const todayGames = todayMatches.length;
+  const todayChessWins = todayMatches.filter(
+    (m) => m.gameType === "chess" && m.winner === currentUsername
+  ).length;
+  const todayDifferentGames = new Set(todayMatches.map((m) => m.gameType)).size;
+
   const dailyQuests = [
     {
       id: 1,
-      title: "DECRYPT CELL NODES",
-      desc: "Scan 20 safety zones in Minesweeper",
+      title: "AI SLAYER",
+      desc: "Win 3 matches against the AI today",
       xp: "+150 XP",
-      progress: 0.65,
-      completed: false,
+      current: Math.min(todayWins, 3),
+      target: 3,
+      progress: Math.min(todayWins / 3, 1),
+      completed: todayWins >= 3,
     },
     {
       id: 2,
-      title: "TACTICAL MATE",
-      desc: "Perform checkmate in Grandmaster Chess",
-      xp: "+300 XP",
-      progress: 0.0,
-      completed: false,
+      title: "TACTICAL MIND",
+      desc: "Win a Chess match today",
+      xp: "+200 XP",
+      current: Math.min(todayChessWins, 1),
+      target: 1,
+      progress: Math.min(todayChessWins, 1),
+      completed: todayChessWins >= 1,
     },
     {
       id: 3,
-      title: "COMPRESS DATA",
-      desc: "Slide grid to 1024 packet size in 2048",
-      xp: "+200 XP",
-      progress: 1.0,
-      completed: true,
+      title: "ARENA REGULAR",
+      desc: "Play 5 games today",
+      xp: "+100 XP",
+      current: Math.min(todayGames, 5),
+      target: 5,
+      progress: Math.min(todayGames / 5, 1),
+      completed: todayGames >= 5,
     },
     {
       id: 4,
-      title: "NEURAL CLIMBER",
-      desc: "Ascend 2 ladders in Snakes & Ladders",
-      xp: "+100 XP",
-      progress: 0.5,
-      completed: false,
+      title: "GAME EXPLORER",
+      desc: "Play 3 different game types today",
+      xp: "+120 XP",
+      current: Math.min(todayDifferentGames, 3),
+      target: 3,
+      progress: Math.min(todayDifferentGames / 3, 1),
+      completed: todayDifferentGames >= 3,
     },
   ];
 
@@ -561,7 +587,7 @@ const App: React.FC = () => {
                       textTransform: "uppercase",
                     }}
                   >
-                    RESET IN 14H
+                    {(() => { const now = new Date(); const midnight = new Date(now); midnight.setHours(24,0,0,0); const h = Math.floor((midnight.getTime()-now.getTime())/3600000); const m = Math.floor(((midnight.getTime()-now.getTime())%3600000)/60000); return `RESETS IN ${h}H ${m}M`; })()}
                   </span>
                 </div>
                 <div
@@ -635,22 +661,13 @@ const App: React.FC = () => {
                       >
                         {q.desc}
                       </p>
-                      <div
-                        style={{
-                          background: "rgba(0,0,0,0.4)",
-                          height: "3px",
-                          borderRadius: "0",
-                          overflow: "hidden",
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: `${q.progress * 100}%`,
-                            height: "100%",
-                            background: q.completed ? "#00e676" : "#f5c518",
-                            borderRadius: "0",
-                          }}
-                        />
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                        <div style={{ background: "rgba(0,0,0,0.4)", height: "3px", flex: 1, borderRadius: "0", overflow: "hidden", marginRight: "10px" }}>
+                          <div style={{ width: `${q.progress * 100}%`, height: "100%", background: q.completed ? "#00e676" : "#f5c518", transition: "width 0.4s ease" }} />
+                        </div>
+                        <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", color: q.completed ? "#00e676" : "#7b8299", flexShrink: 0 }}>
+                          {q.current}/{q.target}
+                        </span>
                       </div>
                     </div>
                   ))}
@@ -2186,6 +2203,209 @@ const App: React.FC = () => {
             </div>
           </div>
         );
+      case "profile":
+        return (
+          <div className="animate-fade-in" style={{ maxWidth: "640px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "24px" }}>
+
+            {/* Header */}
+            <div style={{ background: "#131722", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "4px", padding: "32px", position: "relative", overflow: "hidden" }}>
+              <div className="corner-tag" style={{ background: "#c850f0" }}>PROFILE_SYS</div>
+              <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
+                <div style={{ width: "80px", height: "80px", border: "2px solid rgba(200,80,240,0.4)", flexShrink: 0, overflow: "hidden", background: "#070b13" }}>
+                  <img
+                    src={getAvatarUrl(profileEditSeed || currentUsername)}
+                    alt="avatar preview"
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: "26px", color: "#e8eaf0", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    {user.username}
+                  </div>
+                  <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "10px", color: "#c850f0", textTransform: "uppercase", letterSpacing: "0.1em", marginTop: "4px" }}>
+                    {getLevelTitle(user.level)} // LVL {user.level}
+                  </div>
+                  <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", color: "#3d4460", marginTop: "6px", textTransform: "uppercase" }}>
+                    {user.email}
+                  </div>
+                </div>
+              </div>
+
+              {/* Stats row */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px", marginTop: "24px" }}>
+                {[
+                  { label: "XP", value: user.xp, color: "#00e5ff" },
+                  { label: "WINS", value: user.wins, color: "#00e676" },
+                  { label: "LOSSES", value: user.losses, color: "#ff3d3d" },
+                  { label: "DRAWS", value: user.draws, color: "#f5c518" },
+                ].map((s) => (
+                  <div key={s.label} style={{ background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.04)", borderRadius: "3px", padding: "12px", textAlign: "center" }}>
+                    <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "18px", color: s.color, fontWeight: 700 }}>{s.value}</div>
+                    <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "8px", color: "#3d4460", textTransform: "uppercase", marginTop: "3px" }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Edit Username */}
+            <div style={{ background: "#131722", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "4px", padding: "24px" }}>
+              <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", color: "#e8eaf0", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "20px", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "12px" }}>
+                EDIT_USERNAME
+              </div>
+              <div style={{ display: "flex", gap: "10px" }}>
+                <input
+                  value={profileEditUsername}
+                  onChange={(e) => setProfileEditUsername(e.target.value)}
+                  placeholder={user.username}
+                  maxLength={24}
+                  style={{
+                    flex: 1,
+                    background: "rgba(0,0,0,0.3)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: "3px",
+                    padding: "10px 14px",
+                    fontFamily: "'Share Tech Mono', monospace",
+                    fontSize: "12px",
+                    color: "#e8eaf0",
+                    outline: "none",
+                  }}
+                />
+                <button
+                  onClick={async () => {
+                    if (!profileEditUsername.trim() || profileEditUsername === user.username) return;
+                    setProfileSaving(true); setProfileMsg(null);
+                    const r = await updateProfile(profileEditUsername.trim(), profileEditSeed || currentUsername);
+                    setProfileSaving(false);
+                    setProfileMsg(r.success ? { type: "ok", text: "Username updated!" } : { type: "err", text: r.error || "Failed" });
+                  }}
+                  disabled={profileSaving || !profileEditUsername.trim() || profileEditUsername === user.username}
+                  style={{
+                    fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", textTransform: "uppercase", letterSpacing: "0.1em",
+                    padding: "10px 20px", border: "none", background: "#00e5ff", color: "#000", cursor: "pointer", borderRadius: "2px",
+                    opacity: (profileSaving || !profileEditUsername.trim() || profileEditUsername === user.username) ? 0.4 : 1,
+                  }}
+                >
+                  {profileSaving ? "SAVING..." : "SAVE"}
+                </button>
+              </div>
+            </div>
+
+            {/* Change Avatar */}
+            <div style={{ background: "#131722", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "4px", padding: "24px" }}>
+              <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", color: "#e8eaf0", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "12px", marginBottom: "20px" }}>
+                CHANGE_AVATAR
+              </div>
+              <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", color: "#7b8299", marginBottom: "14px", textTransform: "uppercase" }}>
+                Type any word to generate a unique robot avatar
+              </div>
+              <div style={{ display: "flex", gap: "10px", marginBottom: "16px" }}>
+                <input
+                  value={profileEditSeed}
+                  onChange={(e) => setProfileEditSeed(e.target.value)}
+                  placeholder="Enter a seed word..."
+                  style={{
+                    flex: 1,
+                    background: "rgba(0,0,0,0.3)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: "3px",
+                    padding: "10px 14px",
+                    fontFamily: "'Share Tech Mono', monospace",
+                    fontSize: "12px",
+                    color: "#e8eaf0",
+                    outline: "none",
+                  }}
+                />
+              </div>
+              {/* Avatar previews grid */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "8px", marginBottom: "16px" }}>
+                {(profileEditSeed
+                  ? [profileEditSeed, profileEditSeed+"1", profileEditSeed+"2", profileEditSeed+"X", profileEditSeed+"Z", profileEditSeed+"Alpha"]
+                  : ["cyber", "neon", "ghost", "pixel", "nova", "storm"]
+                ).map((seed) => (
+                  <button
+                    key={seed}
+                    onClick={() => setProfileEditSeed(seed)}
+                    style={{
+                      background: profileEditSeed === seed ? "rgba(200,80,240,0.15)" : "rgba(0,0,0,0.25)",
+                      border: `1px solid ${profileEditSeed === seed ? "rgba(200,80,240,0.6)" : "rgba(255,255,255,0.06)"}`,
+                      borderRadius: "3px",
+                      padding: "4px",
+                      cursor: "pointer",
+                      overflow: "hidden",
+                      aspectRatio: "1",
+                    }}
+                  >
+                    <img src={getAvatarUrl(seed)} alt={seed} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={async () => {
+                  if (!profileEditSeed.trim()) return;
+                  setProfileSaving(true); setProfileMsg(null);
+                  const r = await updateProfile(profileEditUsername || currentUsername, profileEditSeed.trim());
+                  setProfileSaving(false);
+                  setProfileMsg(r.success ? { type: "ok", text: "Avatar updated!" } : { type: "err", text: r.error || "Failed" });
+                }}
+                disabled={profileSaving || !profileEditSeed.trim()}
+                style={{
+                  width: "100%",
+                  fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", textTransform: "uppercase", letterSpacing: "0.1em",
+                  padding: "11px", border: "1px solid rgba(200,80,240,0.4)", background: "transparent", color: "#c850f0", cursor: "pointer", borderRadius: "2px",
+                  opacity: (profileSaving || !profileEditSeed.trim()) ? 0.4 : 1,
+                  transition: "background 0.15s",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(200,80,240,0.1)"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+              >
+                {profileSaving ? "SAVING..." : "APPLY AVATAR"}
+              </button>
+            </div>
+
+            {/* Danger zone */}
+            <div style={{ background: "#131722", border: "1px solid rgba(255,61,61,0.15)", borderRadius: "4px", padding: "24px" }}>
+              <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", color: "#ff3d3d", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "16px", borderBottom: "1px solid rgba(255,61,61,0.1)", paddingBottom: "12px" }}>
+                DANGER_ZONE
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "10px", color: "#e8eaf0", textTransform: "uppercase", marginBottom: "4px" }}>LOGOUT</div>
+                  <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", color: "#7b8299", textTransform: "uppercase" }}>End your current session</div>
+                </div>
+                <button
+                  onClick={() => { AudioManager.playClick(); logout(); }}
+                  style={{
+                    fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", textTransform: "uppercase", letterSpacing: "0.1em",
+                    padding: "10px 20px", border: "1px solid rgba(255,61,61,0.4)", background: "transparent", color: "#ff3d3d", cursor: "pointer", borderRadius: "2px",
+                    transition: "background 0.15s",
+                  }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,61,61,0.1)"; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+                >
+                  LOGOUT
+                </button>
+              </div>
+            </div>
+
+            {/* Status message */}
+            {profileMsg && (
+              <div style={{
+                padding: "12px 16px",
+                border: `1px solid ${profileMsg.type === "ok" ? "rgba(0,230,118,0.3)" : "rgba(255,61,61,0.3)"}`,
+                borderRadius: "3px",
+                background: profileMsg.type === "ok" ? "rgba(0,230,118,0.05)" : "rgba(255,61,61,0.05)",
+                fontFamily: "'Share Tech Mono', monospace",
+                fontSize: "10px",
+                color: profileMsg.type === "ok" ? "#00e676" : "#ff3d3d",
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+              }}>
+                {profileMsg.type === "ok" ? "✓ " : "✕ "}{profileMsg.text}
+              </div>
+            )}
+          </div>
+        );
+
     }
   };
 
@@ -2242,16 +2462,18 @@ const App: React.FC = () => {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <div
+              <button
+                onClick={() => { AudioManager.playClick(); setProfileEditUsername(user?.username || ""); setProfileEditSeed(user?.username || ""); setProfileMsg(null); setActiveView("profile"); }}
                 style={{
                   width: "40px",
                   height: "40px",
                   flexShrink: 0,
                   border: "1px solid rgba(0,229,255,0.4)",
-                  boxShadow:
-                    "0 0 12px rgba(0,229,255,0.25), inset 0 0 8px rgba(0,229,255,0.05)",
+                  boxShadow: "0 0 12px rgba(0,229,255,0.25), inset 0 0 8px rgba(0,229,255,0.05)",
                   overflow: "hidden",
                   background: "#0d0f1a",
+                  padding: 0,
+                  cursor: "pointer",
                 }}
               >
                 {user.avatar && user.avatar.startsWith("http") ? (
@@ -2275,7 +2497,7 @@ const App: React.FC = () => {
                     }}
                   />
                 )}
-              </div>
+              </button>
               <div style={{ overflow: "hidden", flex: 1 }}>
                 <div
                   style={{
@@ -2527,7 +2749,7 @@ const App: React.FC = () => {
                 textShadow: "0 0 12px rgba(0,229,255,0.5)",
               }}
             >
-              NEON_REALM
+              SENET
             </span>
             <span
               style={{
@@ -2565,28 +2787,12 @@ const App: React.FC = () => {
             >
               <i className="fa-solid fa-sliders" />
             </button>
-            <div style={{ position: "relative" }}>
-              <button className="icon-btn" title="Notifications">
-                <i className="fa-solid fa-bell" />
-              </button>
-              <span
-                style={{
-                  position: "absolute",
-                  top: "7px",
-                  right: "7px",
-                  width: "5px",
-                  height: "5px",
-                  borderRadius: "50%",
-                  background: "#c850f0",
-                  boxShadow: "0 0 6px rgba(200,80,240,0.8)",
-                }}
-              />
-            </div>
+
 
             <button
               className="icon-btn"
               title="View Profile"
-              onClick={() => { AudioManager.playClick(); setActiveView("dashboard"); }}
+              onClick={() => { AudioManager.playClick(); setProfileEditUsername(user?.username || ""); setProfileEditSeed(user?.username || ""); setProfileMsg(null); setActiveView("profile"); }}
               style={{ overflow: "hidden", padding: 0 }}
             >
               {user.avatar && user.avatar.startsWith("http") ? (

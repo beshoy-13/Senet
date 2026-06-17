@@ -12,9 +12,7 @@ router.post("/register", async (req, res): Promise<any> => {
   const { email, username, password, avatar } = req.body;
 
   if (!email || !username || !password) {
-    return res
-      .status(400)
-      .json({ error: "Missing required fields (email, username, password)" });
+    return res.status(400).json({ error: "Missing required fields (email, username, password)" });
   }
 
   try {
@@ -23,9 +21,7 @@ router.post("/register", async (req, res): Promise<any> => {
     });
 
     if (existingUser) {
-      return res
-        .status(400)
-        .json({ error: "Email or username already in use." });
+      return res.status(400).json({ error: "Email or username already in use." });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -45,9 +41,7 @@ router.post("/register", async (req, res): Promise<any> => {
       },
     });
 
-    const token = jwt.sign({ userId: user.id }, JWT_SECRET, {
-      expiresIn: "7d",
-    });
+    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
 
     return res.status(201).json({
       token,
@@ -74,9 +68,7 @@ router.post("/login", async (req, res): Promise<any> => {
   const { identifier, password } = req.body;
 
   if (!identifier || !password) {
-    return res
-      .status(400)
-      .json({ error: "Missing identifier (email/username) or password" });
+    return res.status(400).json({ error: "Missing identifier (email/username) or password" });
   }
 
   try {
@@ -93,9 +85,7 @@ router.post("/login", async (req, res): Promise<any> => {
       return res.status(400).json({ error: "Invalid credentials." });
     }
 
-    const token = jwt.sign({ userId: user.id }, JWT_SECRET, {
-      expiresIn: "7d",
-    });
+    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "7d" });
 
     return res.status(200).json({
       token,
@@ -118,68 +108,93 @@ router.post("/login", async (req, res): Promise<any> => {
 });
 
 // GET /api/auth/profile
-router.get(
-  "/profile",
-  authMiddleware,
-  async (req: AuthRequest, res: Response): Promise<any> => {
-    try {
-      const user = await prisma.user.findUnique({
-        where: { id: req.userId },
-        include: {
-          matchesAsPlayer1: {
-            include: { player1: true, player2: true, winner: true },
-            take: 10,
-            orderBy: { startedAt: "desc" },
-          },
-          matchesAsPlayer2: {
-            include: { player1: true, player2: true, winner: true },
-            take: 10,
-            orderBy: { startedAt: "desc" },
-          },
+router.get("/profile", authMiddleware, async (req: AuthRequest, res: Response): Promise<any> => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      include: {
+        matchesAsPlayer1: {
+          include: { player1: true, player2: true, winner: true },
+          take: 10,
+          orderBy: { startedAt: "desc" },
         },
-      });
-
-      if (!user) {
-        return res.status(404).json({ error: "User not found." });
-      }
-
-      const allMatches = [...user.matchesAsPlayer1, ...user.matchesAsPlayer2]
-        .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
-        .slice(0, 20)
-        .map((m) => ({
-          id: m.id,
-          gameType: m.gameType,
-          status: m.status,
-          player1: { username: m.player1.username, avatar: m.player1.avatar },
-          // player2 is nullable (solo/AI games have no player2 row)
-          player2: m.player2
-            ? { username: m.player2.username, avatar: m.player2.avatar }
-            : { username: "AI", avatar: "" },
-          winner: m.winner ? m.winner.username : null,
-          startedAt: m.startedAt,
-          endedAt: m.endedAt,
-        }));
-
-      return res.status(200).json({
-        user: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          avatar: user.avatar,
-          xp: user.xp,
-          level: user.level,
-          wins: user.wins,
-          losses: user.losses,
-          draws: user.draws,
+        matchesAsPlayer2: {
+          include: { player1: true, player2: true, winner: true },
+          take: 10,
+          orderBy: { startedAt: "desc" },
         },
-        matchHistory: allMatches,
-      });
-    } catch (error) {
-      console.error("Profile error:", error);
-      return res.status(500).json({ error: "Server error fetching profile." });
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
     }
-  },
-);
+
+    const allMatches = [...user.matchesAsPlayer1, ...user.matchesAsPlayer2]
+      .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
+      .slice(0, 20)
+      .map((m) => ({
+        id: m.id,
+        gameType: m.gameType,
+        status: m.status,
+        player1: { username: m.player1.username, avatar: m.player1.avatar },
+        // player2 is nullable (solo/AI games have no player2 row)
+        player2: m.player2
+          ? { username: m.player2.username, avatar: m.player2.avatar }
+          : { username: "AI", avatar: "" },
+        winner: m.winner ? m.winner.username : null,
+        startedAt: m.startedAt,
+        endedAt: m.endedAt,
+      }));
+
+    return res.status(200).json({
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        avatar: user.avatar,
+        xp: user.xp,
+        level: user.level,
+        wins: user.wins,
+        losses: user.losses,
+        draws: user.draws,
+      },
+      matchHistory: allMatches,
+    });
+  } catch (error) {
+    console.error("Profile error:", error);
+    return res.status(500).json({ error: "Server error fetching profile." });
+  }
+});
+
+// PATCH /api/auth/profile — update username and/or avatar
+router.patch("/profile", authMiddleware, async (req: AuthRequest, res: Response): Promise<any> => {
+  const { username, avatar } = req.body;
+  if (!username && !avatar) {
+    return res.status(400).json({ error: "Nothing to update" });
+  }
+  try {
+    // Check username uniqueness if changing
+    if (username) {
+      const existing = await prisma.user.findUnique({ where: { username } });
+      if (existing && existing.id !== req.userId) {
+        return res.status(400).json({ error: "Username already taken" });
+      }
+    }
+    const updatedUser = await prisma.user.update({
+      where: { id: req.userId },
+      data: {
+        ...(username && { username }),
+        ...(avatar && { avatar }),
+      },
+      select: { id: true, email: true, username: true, avatar: true, xp: true, level: true, wins: true, losses: true, draws: true },
+    });
+    return res.status(200).json({ user: updatedUser });
+  } catch (error) {
+    console.error("Update profile error:", error);
+    return res.status(500).json({ error: "Server error updating profile" });
+  }
+});
 
 // GET /api/auth/leaderboard (Public)
 router.get("/leaderboard", async (req, res): Promise<any> => {
@@ -202,9 +217,7 @@ router.get("/leaderboard", async (req, res): Promise<any> => {
     return res.status(200).json(players);
   } catch (error) {
     console.error("Leaderboard error:", error);
-    return res
-      .status(500)
-      .json({ error: "Server error fetching leaderboard." });
+    return res.status(500).json({ error: "Server error fetching leaderboard." });
   }
 });
 

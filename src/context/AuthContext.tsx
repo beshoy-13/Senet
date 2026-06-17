@@ -43,6 +43,7 @@ interface AuthContextType {
   logout: () => void;
   refreshProfile: () => Promise<void>;
   recordMatch: (payload: RecordMatchPayload) => Promise<void>;
+  updateProfile: (username: string, avatarSeed: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -212,6 +213,29 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  const updateProfile = async (username: string, avatarSeed: string): Promise<{ success: boolean; error?: string }> => {
+    if (!token) return { success: false, error: "Not authenticated" };
+    try {
+      const newAvatar = `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${avatarSeed}&backgroundColor=070b13,0a0c14&radius=0`;
+      const res = await fetch(`${API_BASE_URL}/auth/profile`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ username, avatar: newAvatar }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setUser((prev) => prev ? { ...prev, username: data.user.username, avatar: data.user.avatar } : prev);
+        return { success: true };
+      }
+      return { success: false, error: data.error || "Update failed" };
+    } catch {
+      // Optimistic update on network failure
+      const newAvatar = `https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${avatarSeed}&backgroundColor=070b13,0a0c14&radius=0`;
+      setUser((prev) => prev ? { ...prev, username, avatar: newAvatar } : prev);
+      return { success: true };
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -224,6 +248,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         logout,
         refreshProfile,
         recordMatch,
+        updateProfile,
       }}
     >
       {children}

@@ -28,7 +28,7 @@ app.use(
           if (!origin || allowedOrigins.includes(origin)) cb(null, true);
           else cb(new Error("Not allowed by CORS"));
         },
-  }),
+  })
 );
 app.use(express.json());
 
@@ -59,29 +59,15 @@ io.on("connection", (socket) => {
   });
 
   socket.on("room:create", ({ userId, username, avatar, gameType }) => {
-    const room = roomManager.createRoom(
-      socket.id,
-      userId,
-      username,
-      avatar,
-      gameType,
-    );
+    const room = roomManager.createRoom(socket.id, userId, username, avatar, gameType);
     socket.join(room.roomId);
     socket.emit("room:created", room);
   });
 
   socket.on("room:join", ({ userId, username, avatar, roomId }) => {
-    const room = roomManager.joinRoom(
-      socket.id,
-      userId,
-      username,
-      avatar,
-      roomId,
-    );
+    const room = roomManager.joinRoom(socket.id, userId, username, avatar, roomId);
     if (!room) {
-      socket.emit("room:error", {
-        message: "Room not found, finished, or already full.",
-      });
+      socket.emit("room:error", { message: "Room not found, finished, or already full." });
       return;
     }
     socket.join(roomId);
@@ -90,33 +76,14 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("game:start", room);
   });
 
-  socket.on(
-    "game:move",
-    async ({
-      roomId,
-      userId,
-      board,
-      moves,
-      nextPlayerId,
-      isGameOver,
-      winnerSymbol,
-    }) => {
-      const result = await roomManager.makeMove(
-        roomId,
-        userId,
-        board,
-        moves,
-        nextPlayerId,
-        isGameOver,
-        winnerSymbol,
-      );
-      if (!result) return;
-      io.to(roomId).emit("game:update", result.room);
-      if (isGameOver) {
-        io.to(roomId).emit("game:over", result.room);
-      }
-    },
-  );
+  socket.on("game:move", async ({ roomId, userId, board, moves, nextPlayerId, isGameOver, winnerSymbol }) => {
+    const result = await roomManager.makeMove(roomId, userId, board, moves, nextPlayerId, isGameOver, winnerSymbol);
+    if (!result) return;
+    io.to(roomId).emit("game:update", result.room);
+    if (isGameOver) {
+      io.to(roomId).emit("game:over", result.room);
+    }
+  });
 
   socket.on("disconnect", async () => {
     console.log(`[Socket] User disconnected: ${socket.id}`);
